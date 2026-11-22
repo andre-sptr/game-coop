@@ -1,21 +1,30 @@
-# Copy to config/config.yml (chmod 600, gitignored) before deploying.
-# RomM 4.5+ uses this block to configure EmulatorJS Netplay & ICE servers for cross-Wi-Fi duo play.
+# Copy to config/config.yml (chmod 600, gitignored) before deploying, or let
+# `scripts/refresh-turn.sh` generate and refresh it every 24 hours automatically.
+#
+# Cloudflare Realtime TURN issues short-lived credentials (max TTL: 48h / 172800s).
+# Never commit real `username` or `credential` values to Git.
 
 emulatorjs:
   netplay:
     enabled: true
     ice_servers:
-      - urls: "stun:stun.relay.metered.ca:80"
-      - urls: "turn:global.relay.metered.ca:80"
-        username: "CHANGE_ME_TURN_USERNAME"
-        credential: "CHANGE_ME_TURN_PASSWORD"
-      - urls: "turns:global.relay.metered.ca:443?transport=tcp"
-        username: "CHANGE_ME_TURN_USERNAME"
-        credential: "CHANGE_ME_TURN_PASSWORD"
+      - urls: "stun:stun.cloudflare.com:3478"
+      - urls: "turn:turn.cloudflare.com:3478?transport=udp"
+        username: "GENERATED_BY_REFRESH_TURN_SCRIPT"
+        credential: "GENERATED_BY_REFRESH_TURN_SCRIPT"
+      - urls: "turn:turn.cloudflare.com:3478?transport=tcp"
+        username: "GENERATED_BY_REFRESH_TURN_SCRIPT"
+        credential: "GENERATED_BY_REFRESH_TURN_SCRIPT"
+      - urls: "turns:turn.cloudflare.com:5349?transport=tcp"
+        username: "GENERATED_BY_REFRESH_TURN_SCRIPT"
+        credential: "GENERATED_BY_REFRESH_TURN_SCRIPT"
 
-# Optional Option B (self-hosted coturn on VPS, requires opening 3478/UDP+TCP & UDP relay range):
+# Fallback Opsi A (Metered.ca Free Tier — permanent static credentials, zero cron, no card):
 #     ice_servers:
-#       - urls: "stun:play.andresptr.site:3478"
-#       - urls: "turn:play.andresptr.site:3478?transport=udp"
-#         username: "CHANGE_ME_COTURN_USER"
-#         credential: "CHANGE_ME_COTURN_PASS"
+#       - urls: "stun:stun.relay.metered.ca:80"
+#       - urls: "turn:global.relay.metered.ca:80"
+#         username: "CHANGE_ME_METERED_USERNAME"
+#         credential: "CHANGE_ME_METERED_PASSWORD"
+#       - urls: "turns:global.relay.metered.ca:443?transport=tcp"
+#         username: "CHANGE_ME_METERED_USERNAME"
+#         credential: "CHANGE_ME_METERED_PASSWORD"

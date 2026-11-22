@@ -1,25 +1,34 @@
 # Rencana Deployment `game-coop` (RomM + EmulatorJS)
 
-**Status:** `Planned — belum di-deploy`
+**Status:** `Planned — siap dieksekusi di /opt/apps/game-coop`
 **Target Domain:** `https://play.andresptr.site`
 **Lokasi Proyek:** `/opt/apps/game-coop`
 
-Dokumen ini adalah rencana teknis lengkap untuk men-deploy **RomM + EmulatorJS** sebagai portal *story single-player* dan *couple duo co-op* via browser laptop di VPS `VM-14-216-ubuntu` secara aman tanpa mengganggu layanan produksi yang sudah berjalan.
+Dokumen ini adalah rencana teknis final untuk men-deploy **RomM + EmulatorJS** sebagai portal *story single-player* dan *couple duo co-op* via browser laptop di VPS `VM-14-216-ubuntu` secara aman tanpa mengganggu layanan produksi yang sudah berjalan.
 
 ---
 
-## 1. Ringkasan & Baseline Audit VPS
+## 1. Ringkasan, Baseline Audit VPS & Keputusan Final
 
 Hasil audit live server (`VM-14-216-ubuntu`) yang menjadi dasar rencana ini:
 
 | Parameter | Kondisi Terverifikasi | Catatan Implementasi |
 | --- | --- | --- |
-| **DNS Subdomain** | `play.andresptr.site` → `43.156.91.169` (sama dengan `andresptr.site`) | Siap untuk penerbitan SSL ACME via 1Panel OpenResty |
+| **DNS Subdomain** | `play.andresptr.site` → `43.156.91.169` (sama dengan `andresptr.site`) | DNS tetap di **Hostinger**; siap SSL ACME via 1Panel OpenResty |
 | **CPU** | `2 vCPU` Intel Xeon Platinum 8255C @ `2.50 GHz` (tanpa GPU) | Emulasi berjalan di browser laptop; beban CPU VPS rendah |
 | **RAM** | `7.5 GiB` total, **`5.6 GiB` tersedia** | Headroom lega untuk batas container `1024 MiB` |
 | **Disk (`/dev/vda2`)** | `79 GiB` total, `31 GiB` terpakai (41%), **`45 GiB` tersedia** | Alokasi library game ditargetkan `15–20 GiB` (jaga ≥20 GiB free) |
 | **PostgreSQL Existing** | Container `1Panel-postgresql-3oWY` (`postgres:18.7-alpine`) di network `1panel-network` (`172.18.0.2`), port `127.0.0.1:5432`, RAM `23.9 MiB` | Dipakai bersama dengan isolasi database & role khusus `romm` |
 | **Port Terpakai Host** | `22`, `80`, `443`, `3000–3003`, `3088`, `3089`, `4000`, `5000`, `5432`, `5678`, `18495` | Port RomM dipilih **`127.0.0.1:8085`** (`-> 8080/tcp`) |
+
+### Keputusan Final (Locked)
+
+| Aspek | Keputusan Final | Fallback (Jika Diperlukan) |
+| --- | --- | --- |
+| **Domain & Proxy** | `https://play.andresptr.site` via 1Panel OpenResty (SSL + `COOP`/`COEP` + WSS) | — |
+| **Database** | Numpang di `1Panel-postgresql-3oWY` (DB & role khusus `romm`, non-superuser) | Container terpisah `mariadb:11` (`512m` RAM) |
+| **Netplay Beda Wi-Fi** | **Opsi A — Cloudflare Realtime TURN** + auto-refresh harian (`scripts/refresh-turn.sh`) | Metered.ca Free Tier (statis permanen) atau self-hosted `coturn` |
+| **Metadata Cover & Sinopsis** | **IGDB aktif sejak Phase 2** (`IGDB_CLIENT_ID` & `IGDB_CLIENT_SECRET`) | — |
 
 ---
 
@@ -48,9 +57,9 @@ Hasil audit live server (`VM-14-216-ubuntu`) yang menjadi dasar rencana ini:
   [Laptop Anda]                    [Laptop Pasangan]
    Browser + Gamepad                Browser + Gamepad
          \                                /
-          \--- WebRTC P2P / TURN Relay --/  (Netplay beda Wi-Fi)
-          |                              |
-          +------- HTTPS / WSS (443) ----+
+          \-- WebRTC P2P / CF TURN Relay-/  (Cloudflare Realtime STUN/TURN)
+          |                              |   ^-- di-refresh tiap 04:00
+          +------- HTTPS / WSS (443) ----+       oleh scripts/refresh-turn.sh
                          |
                          v
           1Panel OpenResty (`1Panel-openresty-NKAT`)
@@ -61,7 +70,7 @@ Hasil audit live server (`VM-14-216-ubuntu`) yang menjadi dasar rencana ini:
                          v  (127.0.0.1:8085 -> 8080/tcp)
           Container `romm` (`rommapp/romm:<pinned>`)
             - Limits: 1.0 vCPU, 1024 MiB RAM/Swap
-            - Embedded Valkey/Redis + EmulatorJS Assets
+            - Embedded Valkey/Redis + EmulatorJS + IGDB Metadata
             - Storage: /opt/apps/game-coop/data/{library,assets,resources,redis}
                          |
                          v  (Docker network: 1panel-network)
@@ -70,7 +79,7 @@ Hasil audit live server (`VM-14-216-ubuntu`) yang menjadi dasar rencana ini:
 ```
 
 ### Budget Resource & Storage
-- **Container `romm` Cap**: `cpus: "1.0"`, `mem_limit: 1024m`, `memswap_limit: 1024m` (mencegah *memory spike* saat hashing/scanning ROM mengganggu `bubu`, `n8n`, `waha`, `rekapal`, `aet-api`, atau `postgresql`).
+- **Container `romm` Cap**: `cpus: "1.0"`, `mem_limit: 1024m`, `memswap_limit: 1024m` (mencegah *memory spike* saat hashing/scanning ROM atau scraping IGDB mengganggu `bubu`, `n8n`, `waha`, `rekapal`, `aet-api`, atau `postgresql`).
 - **Target Pemakaian Disk**: `15 – 20 GiB` (agar ruang kosong `/dev/vda2` tetap di atas `~20 GiB`).
 - **Format ROM yang Disarankan**:
   - Konsol 8/16/32-bit ringan (NES, SNES, GBA, Genesis): `.zip` (ukuran 1–32 MB).
@@ -79,19 +88,31 @@ Hasil audit live server (`VM-14-216-ubuntu`) yang menjadi dasar rencana ini:
 
 ---
 
-## 4. Strategi Netplay Beda Wi-Fi (STUN/TURN)
+## 4. Strategi Netplay Beda Wi-Fi: Cloudflare Realtime TURN + Auto-Refresh Harian
 
-Karena Anda dan pasangan bermain dari **Wi-Fi yang berbeda**, koneksi WebRTC EmulatorJS sering terhalang NAT simetris router/ISP. Konfigurasi Netplay RomM (v4.5+) diatur di `/opt/apps/game-coop/config/config.yml` pada blok `emulatorjs.netplay`.
+Karena Anda dan pasangan bermain dari **Wi-Fi yang berbeda**, koneksi WebRTC EmulatorJS membutuhkan STUN/TURN server agar tidak terblokir NAT simetris router/ISP. Pilihan final menggunakan **Cloudflare Realtime TURN**:
 
-### Opsi A — Eksternal Free TURN (Direkomendasikan Pertama)
-- Menggunakan layanan TURN gratis seperti **Metered Free TURN** atau **Cloudflare Calls TURN**.
-- **Kelebihan**: **Tidak perlu membuka port baru** di Tencent Cloud Security Group/Lighthouse Firewall, tidak ada beban bandwidth/proses tambahan di VPS.
-- **Kekurangan**: Kuota bandwidth bulanan gratis (untuk 2 pemain 2D/SNES/PS1 sangat mencukupi — umumnya beberapa GB/bulan).
+- **Kuota Gratis Besar**: Free tier **1.000 GB (1 TB) per bulan** untuk egress TURN dan **unlimited** untuk STUN (`stun.cloudflare.com:3478`).
+- **DNS Tetap di Hostinger**: Tidak perlu memindahkan nameserver domain ke Cloudflare; cukup memakai fitur Cloudflare Realtime TURN via API.
+- **Nol Port Firewall Baru**: Tidak perlu membuka port tambahan apa pun di Tencent Cloud Security Group/Lighthouse Firewall.
 
-### Opsi B — Self-Hosted `coturn` di VPS (Fallback jika Opsi A lambat/kuota habis)
-- Menjalankan container ringan `coturn/coturn` (`~30 MiB` RAM) di VPS.
-- **Konsekuensi Firewall**: Wajib membuka port **`3478/TCP+UDP`** dan rentang port relay UDP kecil (mis. **`49152-49200/UDP`**) di Tencent Cloud Firewall.
-- Gunakan Opsi B hanya jika hasil uji coba Netplay dengan Opsi A mengalami kendala koneksi.
+### Batasan Teknis Penting & Solusi Otomatis (Max TTL 48 Jam)
+Cloudflare Realtime TURN hanya menerbitkan kredensial sementara (*ephemeral credentials*) melalui endpoint API:
+
+```text
+POST https://rtc.live.cloudflare.com/v1/turn/keys/$CLOUDFLARE_TURN_KEY_ID/credentials/generate-ice-servers
+```
+
+Masa berlaku maksimal (`ttl`) adalah **48 jam (`172800` detik)** — tidak ada kredensial statis permanen. Jika kredensial kedaluwarsa, sesi Netplay baru akan gagal terhubung tanpa error yang jelas di UI.
+
+**Solusi yang akan dibuat saat deployment (`scripts/refresh-turn.sh`):**
+1. Membaca `CLOUDFLARE_TURN_KEY_ID` dan `CLOUDFLARE_TURN_API_TOKEN` dari `.env` (tanpa mencetak secret ke stdout/log).
+2. Memanggil API Cloudflare Realtime TURN dengan `{"ttl": 172800}` (48 jam) menggunakan `curl` dan mem-parsing `iceServers` dengan `jq`.
+3. Menulis `config/config.yml` baru secara atomik (`chmod 600`) dengan blok `emulatorjs.netplay` (hanya jika response API valid dan tidak kosong, sehingga config lama tidak rusak bila API gangguan).
+4. Melakukan restart singkat `docker compose restart romm` agar RomM memuat kredensial segar.
+5. Dijadwalkan via **cron harian pukul `04:00`** → kredensial selalu memiliki sisa masa berlaku minimal **24 jam**.
+
+> **Catatan Transparan (Fallback Tanpa Kartu):** Beberapa akun baru Cloudflare Realtime meminta metode pembayaran terverifikasi (untuk proteksi overage di atas kuota gratis 1 TB/bulan). Jika Anda menemui prompt tersebut dan tidak ingin menautkan kartu, kita bisa langsung memakai **Metered.ca Free Tier** sebagai *drop-in fallback* (kredensial statis permanen, tanpa cron, cukup salin ke `config/config.yml`), atau self-hosted **`coturn`** sebagai opsi cadangan.
 
 ---
 
@@ -109,23 +130,33 @@ Karena Anda dan pasangan bermain dari **Wi-Fi yang berbeda**, koneksi WebRTC Emu
    ```
 3. Verifikasi role `romm` **tidak** memiliki atribut `SUPERUSER` dan tidak diberi akses ke database lain.
 
-### Phase 2: Konfigurasi Lokal, Direktori Data & Kredensial Pendukung
+### Phase 2: Konfigurasi Lokal, Kredensial IGDB & Cloudflare TURN
 1. Buat struktur direktori runtime di `/opt/apps/game-coop`:
    ```bash
    mkdir -p /opt/apps/game-coop/data/{library,assets,resources,redis} /opt/apps/game-coop/backups
    ```
-2. Salin template konfigurasi dan ketatkan permission:
+2. Salin `.env.example` menjadi `.env` (`chmod 600`):
    ```bash
    cp /opt/apps/game-coop/.env.example /opt/apps/game-coop/.env
-   cp /opt/apps/game-coop/config/config.example.yml /opt/apps/game-coop/config/config.yml
-   chmod 600 /opt/apps/game-coop/.env /opt/apps/game-coop/config/config.yml
+   chmod 600 /opt/apps/game-coop/.env
    ```
-3. Isi `.env`:
-   - Tentukan tag rilis stabil terbaru di `ROMM_IMAGE_TAG` (cek rilis resmi `rommapp/romm`).
+3. **Siapkan IGDB API Keys (Cover & Sinopsis Otomatis — Gratis):**
+   - Login dengan akun Twitch ke **`https://dev.twitch.tv/console/apps`** (aktifkan 2FA jika diminta Twitch).
+   - Klik **Register Your Application**:
+     - **Name**: `RomM-GameCoop` (atau bebas yang unik)
+     - **OAuth Redirect URLs**: `http://localhost`
+     - **Category**: `Application Integration`
+   - Klik **Manage** → salin **Client ID** dan klik **New Secret** untuk mendapatkan **Client Secret**.
+   - Masukkan ke `.env`: `IGDB_CLIENT_ID` dan `IGDB_CLIENT_SECRET`.
+4. **Siapkan Cloudflare Realtime TURN Keys:**
+   - Buka **Cloudflare Dashboard → Realtime → TURN Apps → Create** (beri nama mis. `game-coop`).
+   - Salin **TURN Key ID** dan **API Token** (token hanya tampil sekali saat dibuat).
+   - Masukkan ke `.env`: `CLOUDFLARE_TURN_KEY_ID` dan `CLOUDFLARE_TURN_API_TOKEN`.
+5. Lengkapi `.env` lainnya:
+   - Pin `ROMM_IMAGE_TAG` ke versi rilis stabil terbaru `rommapp/romm`.
    - Generate `ROMM_AUTH_SECRET_KEY` dengan `openssl rand -hex 32`.
    - Isi `DB_PASSWD` sesuai Phase 1.
-   - *(Opsional tapi sangat disarankan)* Isi `IGDB_CLIENT_ID` & `IGDB_CLIENT_SECRET` (gratis via Twitch Developer Console) agar RomM otomatis menarik cover art & sinopsis cerita.
-4. Isi `config/config.yml` dengan STUN/TURN `ice_servers` (Opsi A).
+6. Buat dan jalankan `scripts/refresh-turn.sh` untuk menghasilkan `config/config.yml` awal (`chmod 600`) sebelum container dijalankan.
 
 ### Phase 3: Setup `docker-compose.yml` & Uji Boot Awal
 Tambahkan `/opt/apps/game-coop/docker-compose.yml` dengan referensi berikut:
@@ -187,22 +218,23 @@ docker compose logs -f --tail=100 romm
    docker exec 1Panel-openresty-NKAT openresty -s reload
    ```
 
-### Phase 5: Onboarding Akun Privat & Uji Coba Duo Lintas Wi-Fi
+### Phase 5: Onboarding Akun Privat, Tes IGDB & Uji Coba Duo Lintas Wi-Fi
 1. Buka `https://play.andresptr.site` → buat **akun admin** Anda lalu **matikan registrasi publik** (`Disable registration`) agar portal tetap privat.
 2. Buat **akun kedua** untuk pasangan Anda melalui menu admin.
-3. Unggah 1 ROM homebrew/gratis legal (mis. *Micro Mages* demo NES atau *2048* / *Goodboy Galaxy* demo GBA/SNES) dan uji:
-   - Single-player + pembuatan Save State → reload halaman → pastikan save tersimpan di server.
-   - Uji **Netplay** dari 2 laptop pada **2 jaringan Wi-Fi berbeda** (satu bisa pakai tethering HP): Player 1 *Create Room* berpassword → Player 2 *Join Room* → verifikasi video, audio, dan input gamepad/keyboard sinkron.
+3. Unggah 1 ROM homebrew/gratis legal (mis. *Micro Mages* demo NES atau *Goodboy Galaxy* demo GBA) dan klik **Scan**:
+   - Pastikan metadata cover/deskripsi dari **IGDB** muncul normal di web UI.
+   - Uji single-player + pembuatan Save State → reload halaman → pastikan save tersimpan di server.
+   - Uji **Netplay** dari 2 laptop pada **2 jaringan Wi-Fi berbeda** (satu bisa pakai tethering HP): Player 1 *Create Room* berpassword → Player 2 *Join Room* → verifikasi video, audio, dan input gamepad/keyboard berjalan lewat relay Cloudflare TURN jika P2P langsung terblokir NAT.
 
-### Phase 6: Verifikasi Akhir, Backup Otomatis & Sinkronisasi Inventaris
+### Phase 6: Verifikasi Akhir, Cron Otomatis & Sinkronisasi Inventaris
 1. Jalankan seluruh checklist verifikasi:
    - `ss -tlnp | grep 8085` → hanya `127.0.0.1:8085` (bukan `0.0.0.0`).
    - `docker stats --no-stream` → `romm` dan layanan produksi lain stabil dalam batas wajar.
    - `curl -fsSI https://play.andresptr.site` → status `200`/`302`, header `Cross-Origin-Opener-Policy: same-origin` dan `Cross-Origin-Embedder-Policy: require-corp` muncul.
    - Di DevTools Console browser pada halaman game: `self.crossOriginIsolated === true`.
-2. Tambahkan skrip backup harian di `scripts/backup.sh` (disimpan ke `backups/`, rotasi 7–14 hari):
-   - `pg_dump` database `romm` dari `1Panel-postgresql-3oWY`.
-   - Arsip `data/assets/` (berisi **saves & save states** milik Anda & pasangan) dan `config/config.yml`.
+2. Siapkan 2 cron job harian untuk user `ubuntu` (dijadwalkan terpisah dari backup `bubu-ai` pukul `03:00`):
+   - **Pukul `03:30`** — `scripts/backup.sh`: `pg_dump` database `romm` dari `1Panel-postgresql-3oWY` + arsip `data/assets/` (saves & save states) dan `config/config.yml` ke `backups/` (rotasi 7–14 hari).
+   - **Pukul `04:00`** — `scripts/refresh-turn.sh`: refresh kredensial Cloudflare TURN 48 jam di `config/config.yml` + restart singkat `romm`.
 3. Setelah semua live & terverifikasi, sinkronkan inventaris sistem:
    - Tambahkan `play.andresptr.site` (port `127.0.0.1:8085`) ke tabel layanan di `~/.gemini/GEMINI.md`.
    - Tambahkan `[projects."/opt/apps/game-coop"]` (`trust_level = "trusted"`) di `~/.codex/config.toml`.
@@ -213,8 +245,12 @@ docker compose logs -f --tail=100 romm
 
 - **Rollback Bersih (Batal Hosting)**:
   1. `cd /opt/apps/game-coop && docker compose down`
-  2. Hapus site `play.andresptr.site` di 1Panel OpenResty.
-  3. Drop database `romm` dan role `romm` di 1Panel PostgreSQL (layanan lain tidak tersentuh).
+  2. Hapus cron `backup.sh` dan `refresh-turn.sh`.
+  3. Hapus site `play.andresptr.site` di 1Panel OpenResty.
+  4. Drop database `romm` dan role `romm` di 1Panel PostgreSQL (layanan lain tidak tersentuh).
+- **Fallback TURN Tanpa Kartu / Tanpa Cron (Metered.ca)**:
+  1. Ganti blok `ice_servers` di `config/config.yml` ke konfigurasi statis Metered.ca (lihat komentar di `config/config.example.yml`).
+  2. Hapus cron `refresh-turn.sh` dan jalankan `docker compose restart romm`.
 - **Fallback Database ke MariaDB 11 (Jika Migrasi PG 18.7 Bermasalah)**:
   1. `docker compose down`
   2. Tambah service `romm-db` (`image: mariadb:11`, `--memory=512m`, network internal compose) dan ubah `.env` menjadi `ROMM_DB_DRIVER=mariadb`, `DB_HOST=romm-db`, `DB_PORT=3306`.
