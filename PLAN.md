@@ -28,7 +28,7 @@ Hasil audit live server (`VM-14-216-ubuntu`) yang menjadi dasar rencana ini:
 | **Domain & Proxy** | `https://play.andresptr.site` via 1Panel OpenResty (SSL + `COOP`/`COEP` + WSS) | — |
 | **Database** | Numpang di `1Panel-postgresql-3oWY` (DB & role khusus `romm`, non-superuser) | Container terpisah `mariadb:11` (`512m` RAM) |
 | **Netplay Beda Wi-Fi** | **Opsi A — Cloudflare Realtime TURN** + auto-refresh harian (`scripts/refresh-turn.sh`) | Metered.ca Free Tier (statis permanen) atau self-hosted `coturn` |
-| **Metadata Cover & Sinopsis** | **IGDB aktif sejak Phase 2** (`IGDB_CLIENT_ID` & `IGDB_CLIENT_SECRET`) | — |
+| **Metadata Cover & Sinopsis** | **Hasheous** (`HASHEOUS_API_ENABLED=true`, tanpa akun) + **ScreenScraper** (akun email gratis di `screenscraper.fr`, tanpa 2FA SMS) | Hasheous saja langsung jalan tanpa registrasi |
 
 ---
 
@@ -70,7 +70,7 @@ Hasil audit live server (`VM-14-216-ubuntu`) yang menjadi dasar rencana ini:
                          v  (127.0.0.1:8085 -> 8080/tcp)
           Container `romm` (`rommapp/romm:<pinned>`)
             - Limits: 1.0 vCPU, 1024 MiB RAM/Swap
-            - Embedded Valkey/Redis + EmulatorJS + IGDB Metadata
+            - Embedded Valkey/Redis + EmulatorJS + Hasheous/ScreenScraper
             - Storage: /opt/apps/game-coop/data/{library,assets,resources,redis}
                          |
                          v  (Docker network: 1panel-network)
@@ -79,7 +79,7 @@ Hasil audit live server (`VM-14-216-ubuntu`) yang menjadi dasar rencana ini:
 ```
 
 ### Budget Resource & Storage
-- **Container `romm` Cap**: `cpus: "1.0"`, `mem_limit: 1024m`, `memswap_limit: 1024m` (mencegah *memory spike* saat hashing/scanning ROM atau scraping IGDB mengganggu `bubu`, `n8n`, `waha`, `rekapal`, `aet-api`, atau `postgresql`).
+- **Container `romm` Cap**: `cpus: "1.0"`, `mem_limit: 1024m`, `memswap_limit: 1024m` (mencegah *memory spike* saat hashing/scanning ROM atau scraping Hasheous/ScreenScraper mengganggu `bubu`, `n8n`, `waha`, `rekapal`, `aet-api`, atau `postgresql`).
 - **Target Pemakaian Disk**: `15 – 20 GiB` (agar ruang kosong `/dev/vda2` tetap di atas `~20 GiB`).
 - **Format ROM yang Disarankan**:
   - Konsol 8/16/32-bit ringan (NES, SNES, GBA, Genesis): `.zip` (ukuran 1–32 MB).
@@ -130,7 +130,7 @@ Masa berlaku maksimal (`ttl`) adalah **48 jam (`172800` detik)** — tidak ada k
    ```
 3. Verifikasi role `romm` **tidak** memiliki atribut `SUPERUSER` dan tidak diberi akses ke database lain.
 
-### Phase 2: Konfigurasi Lokal, Kredensial IGDB & Cloudflare TURN
+### Phase 2: Konfigurasi Lokal, Metadata Hasheous/ScreenScraper & Cloudflare TURN
 1. Buat struktur direktori runtime di `/opt/apps/game-coop`:
    ```bash
    mkdir -p /opt/apps/game-coop/data/{library,assets,resources,redis} /opt/apps/game-coop/backups
@@ -140,14 +140,10 @@ Masa berlaku maksimal (`ttl`) adalah **48 jam (`172800` detik)** — tidak ada k
    cp /opt/apps/game-coop/.env.example /opt/apps/game-coop/.env
    chmod 600 /opt/apps/game-coop/.env
    ```
-3. **Siapkan IGDB API Keys (Cover & Sinopsis Otomatis — Gratis):**
-   - Login dengan akun Twitch ke **`https://dev.twitch.tv/console/apps`** (aktifkan 2FA jika diminta Twitch).
-   - Klik **Register Your Application**:
-     - **Name**: `RomM-GameCoop` (atau bebas yang unik)
-     - **OAuth Redirect URLs**: `http://localhost`
-     - **Category**: `Application Integration`
-   - Klik **Manage** → salin **Client ID** dan klik **New Secret** untuk mendapatkan **Client Secret**.
-   - Masukkan ke `.env`: `IGDB_CLIENT_ID` dan `IGDB_CLIENT_SECRET`.
+3. **Siapkan Metadata Hasheous + ScreenScraper (Cover & Sinopsis Otomatis — Tanpa 2FA SMS):**
+   - `HASHEOUS_API_ENABLED=true` sudah aktif di `.env.example` (langsung jalan tanpa perlu akun atau API key, mencocokkan hash ROM terhadap database DAT).
+   - Daftar akun gratis hanya dengan email di **`https://www.screenscraper.fr`** (tidak memerlukan nomor HP / 2FA SMS).
+   - Masukkan username & password ScreenScraper Anda ke `.env`: `SCREENSCRAPER_USER` dan `SCREENSCRAPER_PASSWORD`. *(Catatan: jika pendaftaran ScreenScraper ditunda, **Hasheous** saja sudah langsung aktif sejak hari pertama!)*
 4. **Siapkan Cloudflare Realtime TURN Keys:**
    - Buka **Cloudflare Dashboard → Realtime → TURN Apps → Create** (beri nama mis. `game-coop`).
    - Salin **TURN Key ID** dan **API Token** (token hanya tampil sekali saat dibuat).
@@ -218,11 +214,11 @@ docker compose logs -f --tail=100 romm
    docker exec 1Panel-openresty-NKAT openresty -s reload
    ```
 
-### Phase 5: Onboarding Akun Privat, Tes IGDB & Uji Coba Duo Lintas Wi-Fi
+### Phase 5: Onboarding Akun Privat, Tes Metadata & Uji Coba Duo Lintas Wi-Fi
 1. Buka `https://play.andresptr.site` → buat **akun admin** Anda lalu **matikan registrasi publik** (`Disable registration`) agar portal tetap privat.
 2. Buat **akun kedua** untuk pasangan Anda melalui menu admin.
 3. Unggah 1 ROM homebrew/gratis legal (mis. *Micro Mages* demo NES atau *Goodboy Galaxy* demo GBA) dan klik **Scan**:
-   - Pastikan metadata cover/deskripsi dari **IGDB** muncul normal di web UI.
+   - Pastikan metadata cover/deskripsi dari **Hasheous / ScreenScraper** muncul normal di web UI.
    - Uji single-player + pembuatan Save State → reload halaman → pastikan save tersimpan di server.
    - Uji **Netplay** dari 2 laptop pada **2 jaringan Wi-Fi berbeda** (satu bisa pakai tethering HP): Player 1 *Create Room* berpassword → Player 2 *Join Room* → verifikasi video, audio, dan input gamepad/keyboard berjalan lewat relay Cloudflare TURN jika P2P langsung terblokir NAT.
 
