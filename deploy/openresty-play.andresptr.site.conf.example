@@ -1,0 +1,58 @@
+# Reference 1Panel OpenResty vhost snippet for https://play.andresptr.site
+# Merge into /opt/1panel/apps/openresty/openresty/conf/conf.d/play.andresptr.site.conf
+# after creating the site + ACME SSL certificate in 1Panel.
+#
+# IMPORTANT: Keep `add_header` directives at the `server` block level alongside
+# `Strict-Transport-Security`, and do not place `add_header` inside `location /`,
+# otherwise Nginx drops parent server-level headers in child locations.
+
+server {
+    listen 80;
+    listen 443 ssl http2;
+    server_name play.andresptr.site;
+
+    # Allow large ROM/ISO uploads via RomM Web UI
+    client_max_body_size 0;
+
+    access_log /www/sites/play.andresptr.site/log/access.log main;
+    error_log /www/sites/play.andresptr.site/log/error.log;
+
+    location ^~ /.well-known/acme-challenge {
+        allow all;
+        root /usr/share/nginx/html;
+    }
+
+    if ($scheme = http) {
+        return 301 https://$host$request_uri;
+    }
+
+    ssl_certificate /www/sites/play.andresptr.site/ssl/fullchain.pem;
+    ssl_certificate_key /www/sites/play.andresptr.site/ssl/privkey.pem;
+    ssl_protocols TLSv1.3 TLSv1.2;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    error_page 497 https://$host$request_uri;
+
+    # Required for SharedArrayBuffer (threaded EmulatorJS cores such as PSP/PPSSPP)
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Cross-Origin-Embedder-Policy "require-corp" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:8085;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+
+        # WebSocket support for RomM real-time updates & EmulatorJS Netplay signaling
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}

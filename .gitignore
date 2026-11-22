@@ -1,0 +1,34 @@
+# Secrets & local runtime configs
+.env
+.env.*
+!.env.example
+config/config.yml
+
+# Runtime data, saves, ROMs, and backups
+data/
+backups/
+
+# Logs & OS junk
+*.log
+.DS_Store
+
+# ROM, BIOS, disc images, and save/state files (never commit to Git)
+*.zip
+*.7z
+*.chd
+*.cso
+*.iso
+*.bin
+*.cue
+*.gba
+*.gbc
+*.gb
+*.nds
+*.sfc
+*.smc
+*.nes
+*.z64
+*.n64
+*.srm
+*.sav
+*.state
