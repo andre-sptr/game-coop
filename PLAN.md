@@ -1,6 +1,6 @@
 # Rencana Deployment `game-coop` (RomM + EmulatorJS)
 
-**Status:** `Planned — siap dieksekusi di /opt/apps/game-coop`
+**Status:** `Deployed — live & terverifikasi di https://play.andresptr.site (RomM 5.4.1, PostgreSQL 18.7, Cloudflare TURN)`
 **Target Domain:** `https://play.andresptr.site`
 **Lokasi Proyek:** `/opt/apps/game-coop`
 

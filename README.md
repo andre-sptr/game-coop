@@ -1,6 +1,6 @@
 # Game Co-Op (`game-coop`)
 
-**Status:** `Planned — not yet deployed`
+**Status:** `Deployed — live at https://play.andresptr.site (RomM 5.4.1)`
 
 Self-hosted private retro gaming & duo co-op portal for `https://play.andresptr.site`, powered by **RomM** and **EmulatorJS**. Designed for single-player story progression with cloud saves and cross-Wi-Fi 2-player co-op Netplay from laptops.
 
@@ -11,7 +11,7 @@ Self-hosted private retro gaming & duo co-op portal for `https://play.andresptr.
 - `.env.example` — Environment template for RomM container configuration.
 - `config/config.example.yml` — EmulatorJS Netplay & ICE (STUN/TURN) configuration template.
 - `deploy/openresty-play.andresptr.site.conf.example` — 1Panel OpenResty HTTPS reverse proxy snippet with required `COOP`/`COEP` headers.
-- `scripts/` — Reserved for post-deploy backup and maintenance scripts.
+- `scripts/` — Daily automation scripts (`backup.sh` at `03:30` and `refresh-turn.sh` at `04:00`).
 
 ## Using with AGY CLI
 
